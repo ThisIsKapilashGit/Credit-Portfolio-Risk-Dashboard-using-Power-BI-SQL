@@ -3,7 +3,7 @@
 > End-to-end automated dashboard integrating **100,000+ loan records**, tracking NPA ratio,
 > roll rates, and delinquency trends — reducing manual reporting effort by **30 %**.
 
-![CI](https://github.com/<your-username>/credit-portfolio-risk-dashboard/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/<ThisIsKapilashGit>/credit-portfolio-risk-dashboard/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
 ![SQL](https://img.shields.io/badge/SQL-MySQL%208-orange?logo=mysql)
 ![Power BI](https://img.shields.io/badge/Power%20BI-DAX-yellow?logo=powerbi)
