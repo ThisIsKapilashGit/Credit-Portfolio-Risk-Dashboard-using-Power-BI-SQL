@@ -1,0 +1,71 @@
+name: CI — Credit Portfolio Risk Dashboard
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  data-generation:
+    name: Generate Synthetic Data & Run EDA
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate 50 K records (CI sample)
+        run: python python/generate_data.py --records 50000 --seed 42
+
+      - name: Validate CSV row counts
+        run: |
+          python - <<'EOF'
+          import csv, sys
+          checks = {
+            "data/loans.csv":    50_000,
+            "data/borrowers.csv":50_000,
+          }
+          for path, expected in checks.items():
+              with open(path) as f:
+                  rows = sum(1 for _ in csv.reader(f)) - 1
+              assert rows == expected, f"{path}: expected {expected}, got {rows}"
+              print(f"  ✓ {path}: {rows:,} rows")
+          print("All checks passed.")
+          EOF
+
+      - name: Run EDA & generate charts
+        run: python python/eda_kpi.py
+
+      - name: Upload chart artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eda-charts
+          path: data/charts/
+
+  sql-lint:
+    name: SQL Syntax Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install sqlfluff
+        run: pip install sqlfluff
+      - name: Lint SQL files
+        run: |
+          sqlfluff lint sql/ --dialect mysql --templater raw \
+            --rules L001,L002,L003,L010,L011 || true

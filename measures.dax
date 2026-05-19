@@ -1,0 +1,295 @@
+// ============================================================
+// Credit Portfolio Risk Dashboard — Power BI DAX Measures
+// ============================================================
+// Paste each measure into your Power BI model using
+// Modeling > New Measure.
+// ============================================================
+
+
+// ── SECTION 1: PORTFOLIO VOLUME KPIs ──────────────────────
+
+Total Loans = 
+COUNTROWS(loans)
+
+Active Loans = 
+CALCULATE(
+    COUNTROWS(loans),
+    loans[loan_status] IN {"Active", "Restructured"}
+)
+
+Total Outstanding Balance = 
+SUMX(
+    FILTER(loans, loans[loan_status] IN {"Active","Restructured"}),
+    loans[outstanding_balance]
+)
+
+Total Disbursed Amount = 
+SUM(loans[loan_amount])
+
+Average Loan Size = 
+DIVIDE([Total Outstanding Balance], [Active Loans])
+
+
+// ── SECTION 2: NPA METRICS ────────────────────────────────
+
+Gross NPA Amount = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    loans[npa_flag] = 1
+)
+
+Gross NPA Ratio = 
+DIVIDE([Gross NPA Amount], [Total Outstanding Balance], 0)
+
+Gross NPA Ratio % = 
+FORMAT([Gross NPA Ratio], "0.00%")
+
+Net NPA Amount = 
+[Gross NPA Amount] - [Total Provision Amount]
+
+Net NPA Ratio = 
+DIVIDE([Net NPA Amount], [Total Outstanding Balance] - [Total Provision Amount], 0)
+
+NPA Count = 
+CALCULATE(
+    COUNTROWS(loans),
+    loans[npa_flag] = 1
+)
+
+NPA Loan % = 
+DIVIDE([NPA Count], [Active Loans], 0)
+
+
+// ── SECTION 3: DPD BUCKET METRICS ────────────────────────
+
+Balance_Current = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    repayments[dpd_bucket] = "Current"
+)
+
+Balance_1_30 = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    repayments[dpd_bucket] = "1-30"
+)
+
+Balance_31_60 = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    repayments[dpd_bucket] = "31-60"
+)
+
+Balance_61_90 = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    repayments[dpd_bucket] = "61-90"
+)
+
+Balance_91_180 = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    repayments[dpd_bucket] = "91-180"
+)
+
+Balance_180_Plus = 
+CALCULATE(
+    SUM(loans[outstanding_balance]),
+    repayments[dpd_bucket] = "180+"
+)
+
+Delinquent Balance = 
+[Balance_1_30] + [Balance_31_60] + [Balance_61_90] + [Balance_91_180] + [Balance_180_Plus]
+
+Delinquency Rate = 
+DIVIDE([Delinquent Balance], [Total Outstanding Balance], 0)
+
+
+// ── SECTION 4: PROVISION METRICS ─────────────────────────
+
+Total Provision Amount = 
+SUMX(
+    loan_monthly_snapshot,
+    loan_monthly_snapshot[provision_amount]
+)
+
+Provision Coverage Ratio = 
+DIVIDE([Total Provision Amount], [Gross NPA Amount], 0)
+
+Provision Coverage Ratio % = 
+FORMAT([Provision Coverage Ratio], "0.00%")
+
+Provision Shortfall = 
+VAR RequiredProvision =
+    SUMX(
+        ADDCOLUMNS(
+            SUMMARIZE(repayments, repayments[loan_id], repayments[dpd_bucket]),
+            "req_prov",
+            VAR bucket = repayments[dpd_bucket]
+            RETURN
+                LOOKUPVALUE(
+                    provision_matrix[provision_pct],
+                    provision_matrix[bucket], bucket
+                ) / 100
+                * CALCULATE(SUM(loans[outstanding_balance]),
+                            loans[loan_id] = repayments[loan_id])
+        ),
+        [req_prov]
+    )
+RETURN
+    RequiredProvision - [Total Provision Amount]
+
+
+// ── SECTION 5: ROLL-RATE CALCULATIONS ────────────────────
+
+Roll Forward Rate (1-30 to 31-60) = 
+VAR Rollout =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior]   = "1-30",
+        loan_monthly_snapshot[dpd_bucket_current] = "31-60"
+    )
+VAR Base =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior] = "1-30"
+    )
+RETURN DIVIDE(Rollout, Base, 0)
+
+Roll Forward Rate (31-60 to 61-90) = 
+VAR Rollout =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior]   = "31-60",
+        loan_monthly_snapshot[dpd_bucket_current] = "61-90"
+    )
+VAR Base =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior] = "31-60"
+    )
+RETURN DIVIDE(Rollout, Base, 0)
+
+Roll Forward Rate (61-90 to NPA) = 
+VAR Rollout =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior]   = "61-90",
+        loan_monthly_snapshot[dpd_bucket_current] IN {"91-180","180+"}
+    )
+VAR Base =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior] = "61-90"
+    )
+RETURN DIVIDE(Rollout, Base, 0)
+
+Cure Rate = 
+VAR Cured =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior]   <> "Current",
+        loan_monthly_snapshot[dpd_bucket_current] = "Current"
+    )
+VAR Delinquent =
+    CALCULATE(
+        SUM(loan_monthly_snapshot[outstanding_balance]),
+        loan_monthly_snapshot[dpd_bucket_prior] <> "Current"
+    )
+RETURN DIVIDE(Cured, Delinquent, 0)
+
+
+// ── SECTION 6: TIME INTELLIGENCE ─────────────────────────
+
+NPA Ratio MoM Change = 
+VAR CurrentNPA = [Gross NPA Ratio]
+VAR PriorNPA =
+    CALCULATE(
+        [Gross NPA Ratio],
+        DATEADD(loan_monthly_snapshot[snapshot_month], -1, MONTH)
+    )
+RETURN CurrentNPA - PriorNPA
+
+NPA Ratio YoY Change = 
+VAR CurrentNPA = [Gross NPA Ratio]
+VAR PriorYearNPA =
+    CALCULATE(
+        [Gross NPA Ratio],
+        SAMEPERIODLASTYEAR(loan_monthly_snapshot[snapshot_month])
+    )
+RETURN CurrentNPA - PriorYearNPA
+
+Portfolio Growth YoY = 
+DIVIDE(
+    [Total Outstanding Balance]
+    - CALCULATE([Total Outstanding Balance],
+                SAMEPERIODLASTYEAR(loans[disbursement_date])),
+    CALCULATE([Total Outstanding Balance],
+              SAMEPERIODLASTYEAR(loans[disbursement_date])),
+    0
+)
+
+Rolling 3M Avg NPA Ratio = 
+CALCULATE(
+    AVERAGEX(
+        DATESINPERIOD(
+            loan_monthly_snapshot[snapshot_month],
+            LASTDATE(loan_monthly_snapshot[snapshot_month]),
+            -3, MONTH
+        ),
+        [Gross NPA Ratio]
+    )
+)
+
+
+// ── SECTION 7: CREDIT QUALITY ────────────────────────────
+
+Avg Credit Score = 
+AVERAGEX(
+    RELATEDTABLE(borrowers),
+    borrowers[credit_score]
+)
+
+% Prime Borrowers (>=700) = 
+DIVIDE(
+    CALCULATE(COUNTROWS(borrowers), borrowers[credit_score] >= 700),
+    COUNTROWS(borrowers),
+    0
+)
+
+% Subprime Borrowers (<620) = 
+DIVIDE(
+    CALCULATE(COUNTROWS(borrowers), borrowers[credit_score] < 620),
+    COUNTROWS(borrowers),
+    0
+)
+
+Avg LTV Ratio = 
+AVERAGEX(loans, loans[ltv_ratio])
+
+High LTV Loans (>80%) = 
+CALCULATE(
+    COUNTROWS(loans),
+    loans[ltv_ratio] > 80
+)
+
+
+// ── SECTION 8: DYNAMIC TITLE HELPERS ─────────────────────
+
+Selected Product Category = 
+IF(
+    ISFILTERED(loan_products[product_category]),
+    SELECTEDVALUE(loan_products[product_category], "Multiple"),
+    "All Products"
+)
+
+Report As Of Date = 
+"As of " & FORMAT(TODAY(), "DD MMM YYYY")
+
+KPI Status NPA = 
+SWITCH(
+    TRUE(),
+    [Gross NPA Ratio] > 0.10, "🔴 High Risk",
+    [Gross NPA Ratio] > 0.05, "🟡 Moderate",
+    "🟢 Healthy"
+)
