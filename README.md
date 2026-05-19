@@ -40,7 +40,7 @@ credit-portfolio-risk-dashboard/
 ### 1 — Clone & install
 
 ```bash
-git clone https://github.com/<your-username>/credit-portfolio-risk-dashboard.git
+git clone https://github.com/<ThisIsKapilashGit>/credit-portfolio-risk-dashboard.git
 cd credit-portfolio-risk-dashboard
 pip install -r requirements.txt
 ```
